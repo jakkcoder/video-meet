@@ -71,16 +71,6 @@ class VideoMeetApp {
 
   // Landing Page
   bindLandingEvents() {
-    document.getElementById('btn-new-meeting').addEventListener('click', () => {
-      this.createRoom();
-    });
-
-    document.getElementById('btn-schedule-meeting').addEventListener('click', () => {
-      this.switchPage('schedule-page');
-      window.history.pushState({}, '', appPath('/schedule'));
-      this.loadMeetings();
-    });
-
     const input = document.getElementById('input-room-code');
     const joinBtn = document.getElementById('btn-join');
 

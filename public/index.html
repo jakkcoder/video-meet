@@ -20,21 +20,13 @@
       </header>
       <main class="landing-main">
         <div class="landing-content">
-          <h1>Video calls and meetings for everyone</h1>
-          <p>Connect, collaborate, and learn from anywhere with Ghar Ka Guru Meet</p>
-          <div class="landing-actions">
-            <button id="btn-new-meeting" class="btn btn-primary">
-              <span class="material-icons">videocam</span>
-              New meeting
-            </button>
-            <button id="btn-schedule-meeting" class="btn btn-secondary">
-              <span class="material-icons">event</span>
-              Schedule meeting
-            </button>
+          <h1>Ghar Ka Guru Secure Meeting</h1>
+          <p>For teachers and students — join your session with the code shared by your host</p>
+          <div class="landing-actions landing-actions-join-only">
             <div class="join-input-wrapper">
               <span class="material-icons">keyboard</span>
               <input type="text" id="input-room-code" placeholder="Enter a code or session ID">
-              <button id="btn-join" class="btn btn-text" disabled>Join</button>
+              <button id="btn-join" class="btn btn-primary" disabled>Join</button>
             </div>
           </div>
         </div>
@@ -159,11 +151,14 @@
           <div class="meeting-header-left">
             <img src="{{BASE_PATH}}/logo.png" alt="Ghar Ka Guru" class="platform-logo platform-logo-meeting">
             <div class="meeting-info">
-              <span class="material-icons">lock</span>
-              <span id="meeting-id-display"></span>
-              <div id="recording-indicator" class="recording-indicator hidden">
-                <span class="recording-dot"></span>
-                <span>Recording</span>
+              <span class="meeting-tagline">Ghar Ka Guru — secure meeting for teachers and students</span>
+              <div class="meeting-session-row">
+                <span class="material-icons">lock</span>
+                <span id="meeting-id-display"></span>
+                <div id="recording-indicator" class="recording-indicator hidden">
+                  <span class="recording-dot"></span>
+                  <span>Recording</span>
+                </div>
               </div>
             </div>
           </div>

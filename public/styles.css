@@ -358,12 +358,56 @@ body {
   min-width: 0;
 }
 
+.landing-actions-join-only {
+  justify-content: flex-start;
+}
+
+.landing-actions-join-only .join-input-wrapper {
+  width: 100%;
+  max-width: 420px;
+  padding: 6px 12px;
+}
+
+.landing-actions-join-only .join-input-wrapper input {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.landing-actions-join-only .btn-primary {
+  border-radius: 20px;
+  padding: 10px 20px;
+}
+
+.landing-actions-join-only .btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .meeting-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.meeting-tagline {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.meeting-session-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: 13px;
   color: var(--text-secondary);
-  font-size: 14px;
+}
+
+.meeting-session-row .material-icons {
+  font-size: 16px;
 }
 
 .meeting-info .material-icons {
