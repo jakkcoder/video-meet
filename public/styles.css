@@ -457,6 +457,68 @@ body {
   grid-auto-rows: minmax(200px, 1fr);
 }
 
+/* Presentation mode: presenter large on top, others as a thumbnail row below */
+.video-grid.presenting {
+  display: flex;
+  flex-direction: column;
+  grid-template-columns: none;
+  grid-template-rows: none;
+  grid-auto-rows: auto;
+  gap: 8px;
+  align-content: stretch;
+}
+
+.video-grid.presenting .video-tile.presenter {
+  order: 0;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  align-self: stretch;
+}
+
+.video-grid.presenting .video-tile.presenter video {
+  object-fit: contain;
+  background: #000;
+  transform: none;
+}
+
+#local-screen-capture {
+  transform: none !important;
+}
+
+/* All non-presenter tiles share one horizontal strip row at the bottom.
+   They are laid out inline so they flow left-to-right and wrap if needed. */
+.video-grid.presenting .video-tile:not(.presenter) {
+  order: 1;
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 160px;
+  height: 90px;
+  min-height: 0;
+  vertical-align: top;
+}
+
+/* Wrapper row that holds the thumbnails inline (built in JS) */
+.video-grid.presenting .thumb-strip {
+  order: 1;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  line-height: 0;
+}
+
+.video-grid.presenting .thumb-strip .video-tile:not(.presenter) {
+  margin-right: 8px;
+}
+
+@media (max-width: 768px) {
+  .video-grid.presenting .video-tile:not(.presenter) {
+    width: 110px;
+    height: 62px;
+  }
+}
+
 .video-tile {
   background: var(--bg-darker);
   border-radius: 12px;

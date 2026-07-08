@@ -35,6 +35,40 @@ function sanitizeName(name) {
   return (name || 'unknown').replace(/[^a-zA-Z0-9]/g, '_');
 }
 
+function pendingGcsPath(roomId, recordedBy, timestamp, ext) {
+  const safeRoomId = roomId.replace(/[^a-zA-Z0-9-_]/g, '_');
+  return `${GCS_RECORDINGS_FOLDER}/${safeRoomId}/pending/${sanitizeName(recordedBy)}-${timestamp}${ext}`;
+}
+
+async function finalizeGcsPendingRecordings(roomId, room) {
+  const safeRoomId = roomId.replace(/[^a-zA-Z0-9-_]/g, '_');
+  const prefix = `${GCS_RECORDINGS_FOLDER}/${safeRoomId}/pending/`;
+  const bucket = storage.bucket(GCS_BUCKET);
+  const [files] = await bucket.getFiles({ prefix });
+
+  if (files.length === 0) return;
+
+  const endedAt = room.endedAt || new Date();
+  const datetime = endedAt.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const participants = Array.from(room.allParticipantNames).map(sanitizeName).join('-') || 'no-participants';
+
+  for (const file of files) {
+    const basename = path.basename(file.name);
+    const recordedBy = sanitizeName(basename.split('-')[0] || 'unknown');
+    const ext = path.extname(basename) || '.webm';
+    const gcsFilename = `${datetime}_${participants}_${safeRoomId}_${recordedBy}${ext}`;
+    const destPath = `${GCS_RECORDINGS_FOLDER}/${safeRoomId}/${gcsFilename}`;
+
+    try {
+      await file.copy(bucket.file(destPath));
+      await file.delete();
+      console.log(`Recording finalized in GCS: gs://${GCS_BUCKET}/${destPath}`);
+    } catch (err) {
+      console.error(`Failed to finalize ${file.name} in GCS:`, err);
+    }
+  }
+}
+
 async function pushRecordingsToGCS(roomId, room) {
   const roomDir = getRoomDir(roomId);
   if (!fs.existsSync(roomDir)) return;
@@ -86,6 +120,7 @@ async function pushRecordingsToGCS(roomId, room) {
 async function finalizeMeeting(roomId, room) {
   room.endedAt = new Date();
   await pushRecordingsToGCS(roomId, room);
+  await finalizeGcsPendingRecordings(roomId, room);
 }
 
 const stageUpload = multer({
@@ -183,6 +218,40 @@ function registerRoutes(router) {
       return res.json({ exists: false, participants: 0 });
     }
     res.json({ exists: true, participants: room.participants.length });
+  });
+
+  router.post('/api/recordings/upload-url', async (req, res) => {
+    try {
+      const { roomId, recordedBy, contentType } = req.body;
+      if (!roomId || !recordedBy) {
+        return res.status(400).json({ error: 'roomId and recordedBy are required' });
+      }
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const ext = (contentType || '').includes('mp4') ? '.mp4' : '.webm';
+      const gcsPath = pendingGcsPath(roomId, recordedBy, timestamp, ext);
+      const bucket = storage.bucket(GCS_BUCKET);
+      const [uploadUrl] = await bucket.file(gcsPath).getSignedUrl({
+        version: 'v4',
+        action: 'write',
+        expires: Date.now() + 60 * 60 * 1000,
+        contentType: contentType || 'video/webm'
+      });
+
+      res.json({ uploadUrl, gcsPath });
+    } catch (err) {
+      console.error('Failed to create signed upload URL:', err);
+      res.status(500).json({ error: 'Failed to create upload URL', message: err.message });
+    }
+  });
+
+  router.post('/api/recordings/confirm', (req, res) => {
+    const { roomId, gcsPath, recordedBy } = req.body;
+    if (!roomId || !gcsPath) {
+      return res.status(400).json({ error: 'roomId and gcsPath are required' });
+    }
+    console.log(`Recording confirmed in GCS: ${gcsPath} (room: ${roomId}, by: ${recordedBy || 'unknown'})`);
+    res.json({ success: true });
   });
 
   router.post('/api/recordings/stage', stageUpload.single('recording'), (req, res) => {

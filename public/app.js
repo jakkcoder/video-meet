@@ -44,6 +44,21 @@ class VideoMeetApp {
       ]
     };
 
+    // Adaptive quality: bitrate/resolution ladder tiers (highest -> lowest).
+    // Each tier pairs bitrate with resolution scaling so frames stay coherent.
+    this.qualityTiers = [
+      { maxBitrate: 1200000, maxFramerate: 30, scaleDownBy: 1 },
+      { maxBitrate: 800000,  maxFramerate: 30, scaleDownBy: 1 },
+      { maxBitrate: 500000,  maxFramerate: 24, scaleDownBy: 1.5 },
+      { maxBitrate: 300000,  maxFramerate: 20, scaleDownBy: 2 },
+      { maxBitrate: 180000,  maxFramerate: 15, scaleDownBy: 3 }
+    ];
+    this.currentTier = 0;
+    this.tierCeiling = 0;
+    this.aboveSince = 0;
+    this.statsTimer = null;
+    this.applyingParams = false;
+
     this.init();
   }
 
@@ -114,7 +129,12 @@ class VideoMeetApp {
 
     try {
       this.localStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 1280, height: 720, facingMode: 'user' },
+        video: {
+          width: { ideal: 1280, max: 1280 },
+          height: { ideal: 720, max: 720 },
+          frameRate: { ideal: 24, max: 30 },
+          facingMode: 'user'
+        },
         audio: { echoCancellation: true, noiseSuppression: true }
       });
       document.getElementById('preview-video').srcObject = this.localStream;
@@ -244,6 +264,12 @@ class VideoMeetApp {
     const video = document.getElementById('local-video');
     video.srcObject = this.localStream;
 
+    if (this.localStream) {
+      this.localStream.getVideoTracks().forEach(track => {
+        if ('contentHint' in track) track.contentHint = 'motion';
+      });
+    }
+
     if (!this.isVideoEnabled) {
       document.getElementById('local-no-video').classList.remove('hidden');
     }
@@ -323,6 +349,48 @@ class VideoMeetApp {
         micStatus.querySelector('.material-icons').textContent = enabled ? 'mic' : 'mic_off';
       }
     });
+
+    this.socket.on('user-screen-share', ({ userId, sharing }) => {
+      const peer = this.peers.get(userId);
+      if (!peer) return;
+      this.setPresenter(sharing ? peer.tile : null);
+    });
+  }
+
+  setPresenter(tileEl) {
+    const grid = document.getElementById('video-grid');
+    const existingStrip = grid.querySelector('.thumb-strip');
+
+    const restoreTiles = () => {
+      if (existingStrip) {
+        while (existingStrip.firstChild) {
+          grid.appendChild(existingStrip.firstChild);
+        }
+        existingStrip.remove();
+      }
+    };
+
+    grid.querySelectorAll('.video-tile.presenter').forEach(t => {
+      t.classList.remove('presenter');
+    });
+
+    if (tileEl) {
+      restoreTiles();
+      tileEl.classList.add('presenter');
+      grid.classList.add('presenting');
+
+      const strip = document.createElement('div');
+      strip.className = 'thumb-strip';
+
+      Array.from(grid.querySelectorAll('.video-tile')).forEach(t => {
+        if (t !== tileEl) strip.appendChild(t);
+      });
+
+      grid.appendChild(strip);
+    } else {
+      restoreTiles();
+      grid.classList.remove('presenting');
+    }
   }
 
   async createPeerConnection(userId, userName, initiator) {
@@ -333,6 +401,9 @@ class VideoMeetApp {
 
     if (this.localStream) {
       this.localStream.getTracks().forEach(track => {
+        if (track.kind === 'video' && 'contentHint' in track) {
+          track.contentHint = 'motion';
+        }
         connection.addTrack(track, this.localStream);
       });
     }
@@ -368,26 +439,121 @@ class VideoMeetApp {
 
     this.updateGridLayout();
     this.updateParticipantsList();
-    this.adjustStreamQuality();
+    this.applyEncoderParams();
+    this.startAdaptiveMonitor();
   }
 
-  adjustStreamQuality() {
+  // Baseline tier from participant count; the network monitor can only go lower.
+  participantBaselineTier() {
     const count = this.peers.size + 1;
-    let maxBitrate = 1500000;
-    if (count > 4) maxBitrate = 800000;
-    if (count > 8) maxBitrate = 400000;
+    if (count > 8) return 3;
+    if (count > 6) return 2;
+    if (count > 4) return 1;
+    return 0;
+  }
 
-    this.peers.forEach(peer => {
-      peer.connection.getSenders().forEach(sender => {
-        if (sender.track?.kind !== 'video') return;
+  async applyEncoderParams() {
+    if (this.applyingParams) return;
+    this.applyingParams = true;
+
+    try {
+      const baseline = this.participantBaselineTier();
+      const tierIndex = Math.max(this.currentTier, baseline);
+      const tier = this.qualityTiers[Math.min(tierIndex, this.qualityTiers.length - 1)];
+      const sharing = this.isScreenSharing;
+
+      for (const peer of this.peers.values()) {
+        const sender = peer.connection.getSenders().find(s => s.track?.kind === 'video');
+        if (!sender) continue;
+
         try {
           const params = sender.getParameters();
           if (!params.encodings?.length) params.encodings = [{}];
-          params.encodings[0].maxBitrate = maxBitrate;
-          sender.setParameters(params);
-        } catch (e) { /* ignore */ }
-      });
-    });
+
+          params.encodings[0].maxBitrate = sharing ? 1500000 : tier.maxBitrate;
+          params.encodings[0].maxFramerate = sharing ? 15 : tier.maxFramerate;
+          params.encodings[0].scaleResolutionDownBy = sharing ? 1 : tier.scaleDownBy;
+          // Camera: keep motion fluid. Screen share: keep text legible.
+          params.degradationPreference = sharing ? 'maintain-resolution' : 'maintain-framerate';
+
+          await sender.setParameters(params);
+
+          // Safari fallback: if scaleResolutionDownBy was ignored, constrain the track.
+          if (!sharing && tier.scaleDownBy > 1 && sender.track) {
+            const settings = sender.track.getSettings();
+            const applied = sender.getParameters().encodings?.[0]?.scaleResolutionDownBy;
+            if (applied === 1 && settings.height) {
+              const targetHeight = Math.round(settings.height / tier.scaleDownBy);
+              sender.track.applyConstraints({ height: targetHeight }).catch(() => {});
+            }
+          }
+        } catch (e) { /* ignore per-peer failures */ }
+      }
+    } finally {
+      this.applyingParams = false;
+    }
+  }
+
+  startAdaptiveMonitor() {
+    if (this.statsTimer) return;
+
+    this.statsTimer = setInterval(() => this.pollNetworkAndAdapt(), 2000);
+  }
+
+  stopAdaptiveMonitor() {
+    if (this.statsTimer) {
+      clearInterval(this.statsTimer);
+      this.statsTimer = null;
+    }
+    this.currentTier = 0;
+    this.aboveSince = 0;
+  }
+
+  async pollNetworkAndAdapt() {
+    if (this.peers.size === 0) return;
+
+    let estimate = Infinity;
+
+    for (const peer of this.peers.values()) {
+      try {
+        const stats = await peer.connection.getStats();
+        stats.forEach(report => {
+          if (report.type === 'candidate-pair' && report.state === 'succeeded' &&
+              typeof report.availableOutgoingBitrate === 'number') {
+            estimate = Math.min(estimate, report.availableOutgoingBitrate);
+          }
+        });
+      } catch (e) { /* ignore */ }
+    }
+
+    if (estimate === Infinity) return;
+
+    const tier = this.qualityTiers[this.currentTier];
+    const nextUp = this.qualityTiers[Math.max(this.currentTier - 1, 0)];
+
+    // Down-step fast: below 80% of current ceiling => step down immediately.
+    if (estimate < tier.maxBitrate * 0.8 && this.currentTier < this.qualityTiers.length - 1) {
+      this.currentTier += 1;
+      this.aboveSince = 0;
+      this.applyEncoderParams();
+      return;
+    }
+
+    // Up-step slow: need headroom above the next-up tier, sustained ~6s.
+    if (this.currentTier > 0 && estimate > nextUp.maxBitrate * 1.2) {
+      if (!this.aboveSince) this.aboveSince = Date.now();
+      if (Date.now() - this.aboveSince > 6000) {
+        this.currentTier -= 1;
+        this.aboveSince = 0;
+        this.applyEncoderParams();
+      }
+    } else {
+      this.aboveSince = 0;
+    }
+  }
+
+  adjustStreamQuality() {
+    this.applyEncoderParams();
   }
 
   createVideoTile(userId, userName) {
@@ -402,25 +568,39 @@ class VideoMeetApp {
       <div class="tile-name"><span>${userName}</span></div>
       <div class="tile-mic-status"><span class="material-icons">mic</span></div>
     `;
-    document.getElementById('video-grid').appendChild(tile);
+    const grid = document.getElementById('video-grid');
+    const strip = grid.querySelector('.thumb-strip');
+    if (grid.classList.contains('presenting') && strip) {
+      strip.appendChild(tile);
+    } else {
+      grid.appendChild(tile);
+    }
     return tile;
   }
 
   removePeer(userId) {
     const peer = this.peers.get(userId);
     if (peer) {
+      if (peer.tile.classList.contains('presenter')) {
+        this.setPresenter(null);
+      }
       peer.connection.close();
       peer.tile.remove();
       this.peers.delete(userId);
       this.showToast(`${peer.userName} left the meeting`);
       this.updateGridLayout();
-      this.adjustStreamQuality();
+      if (this.peers.size === 0) {
+        this.stopAdaptiveMonitor();
+      } else {
+        this.applyEncoderParams();
+      }
     }
   }
 
   updateGridLayout() {
     const grid = document.getElementById('video-grid');
-    const count = grid.children.length;
+    const count = grid.querySelectorAll('.video-tile').length;
+    const presenting = grid.classList.contains('presenting');
 
     grid.className = 'video-grid';
     if (count === 2) grid.classList.add('grid-2');
@@ -428,6 +608,8 @@ class VideoMeetApp {
     else if (count === 4) grid.classList.add('grid-4');
     else if (count <= 6) grid.classList.add('grid-6');
     else if (count > 6) grid.classList.add('grid-many');
+
+    if (presenting) grid.classList.add('presenting');
   }
 
   // Meeting Controls
@@ -535,6 +717,10 @@ class VideoMeetApp {
       const screenTrack = this.screenStream.getVideoTracks()[0];
       if (!screenTrack) throw new Error('No screen video track received');
 
+      if ('contentHint' in screenTrack) {
+        screenTrack.contentHint = 'text';
+      }
+
       await this.sendScreenTrackToPeers(screenTrack);
 
       const screenCapture = document.getElementById('local-screen-capture');
@@ -548,6 +734,9 @@ class VideoMeetApp {
       this.isScreenSharing = true;
       btn.classList.add('sharing');
       this.socket.emit('screen-share-started', { roomId: this.roomId });
+      this.adjustStreamQuality();
+
+      this.setPresenter(document.getElementById('self-tile'));
 
       const surfaceLabels = { monitor: 'entire screen', window: 'window', browser: 'tab' };
       const surface = screenTrack.getSettings().displaySurface;
@@ -591,6 +780,8 @@ class VideoMeetApp {
     this.isScreenSharing = false;
     document.getElementById('btn-screen-share').classList.remove('sharing');
     this.socket?.emit('screen-share-stopped', { roomId: this.roomId });
+    this.setPresenter(null);
+    this.adjustStreamQuality();
   }
 
   // Recording
@@ -799,30 +990,74 @@ class VideoMeetApp {
       return;
     }
 
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const filename = `meeting-${this.roomId}-${timestamp}.${ext}`;
-
     try {
-      const formData = new FormData();
-      formData.append('recording', blob, filename);
-      formData.append('roomId', this.roomId);
-      formData.append('recordedBy', this.userName);
-
-      const res = await fetch(appPath('/api/recordings/stage'), {
+      const urlRes = await fetch(appPath('/api/recordings/upload-url'), {
         method: 'POST',
-        body: formData
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          recordedBy: this.userName,
+          contentType: mimeType
+        })
       });
 
-      const data = await res.json();
+      const urlData = await urlRes.json().catch(() => ({}));
 
-      if (!res.ok) {
-        throw new Error(data.message || data.error || 'Upload failed');
+      if (urlRes.ok && urlData.uploadUrl) {
+        const putRes = await fetch(urlData.uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': mimeType },
+          body: blob
+        });
+
+        if (!putRes.ok) {
+          throw new Error(`Cloud upload failed (${putRes.status})`);
+        }
+
+        await fetch(appPath('/api/recordings/confirm'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            roomId: this.roomId,
+            gcsPath: urlData.gcsPath,
+            recordedBy: this.userName
+          })
+        });
+
+        this.showToast('Recording saved');
+        this.recordedChunks = [];
+        return;
       }
 
-      this.showToast('Recording saved on server');
-    } catch (err) {
-      console.error('Failed to stage recording:', err);
-      this.showToast('Failed to save recording on server');
+      throw new Error(urlData.message || urlData.error || 'Upload URL unavailable');
+    } catch (directErr) {
+      console.warn('Direct GCS upload failed, trying server staging:', directErr);
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const filename = `meeting-${this.roomId}-${timestamp}.${ext}`;
+
+      try {
+        const formData = new FormData();
+        formData.append('recording', blob, filename);
+        formData.append('roomId', this.roomId);
+        formData.append('recordedBy', this.userName);
+
+        const res = await fetch(appPath('/api/recordings/stage'), {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          throw new Error(data.message || data.error || `Upload failed (${res.status})`);
+        }
+
+        this.showToast('Recording saved on server');
+      } catch (err) {
+        console.error('Failed to save recording:', err);
+        this.showToast('Failed to save recording');
+      }
     }
 
     this.recordedChunks = [];
@@ -853,12 +1088,14 @@ class VideoMeetApp {
     shareBtn.classList.remove('sharing');
     document.getElementById('local-screen-share-overlay').classList.add('hidden');
     document.getElementById('local-screen-capture').srcObject = null;
+    this.setPresenter(null);
 
     this.peers.forEach((peer, userId) => {
       peer.connection.close();
       peer.tile.remove();
     });
     this.peers.clear();
+    this.stopAdaptiveMonitor();
     this.stopLocalStream();
     this.socket?.disconnect();
     this.stopTimer();
