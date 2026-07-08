@@ -1,0 +1,33 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/video-meet', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/video-meet']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'video-meet'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/video-meet'
+      - '--region'
+      - 'asia-south1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--port'
+      - '8080'
+      - '--session-affinity'
+      - '--min-instances'
+      - '1'
+      - '--max-instances'
+      - '10'
+      - '--timeout'
+      - '3600'
+      - '--memory'
+      - '1Gi'
+      - '--set-env-vars'
+      - 'BASE_PATH=/meeting,GCS_BUCKET=gharkaguru-website,GCS_RECORDINGS_FOLDER=meeting records'
+images:
+  - 'gcr.io/$PROJECT_ID/video-meet'

@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ghar Ka Guru Meet</title>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@300;400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <link rel="stylesheet" href="{{BASE_PATH}}/styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Landing Page -->
+    <div id="landing-page" class="page active">
+      <header class="landing-header">
+        <div class="logo">
+          <img src="{{BASE_PATH}}/logo.png" alt="Ghar Ka Guru" class="platform-logo">
+          <span class="logo-text">Ghar Ka Guru</span>
+        </div>
+      </header>
+      <main class="landing-main">
+        <div class="landing-content">
+          <h1>Video calls and meetings for everyone</h1>
+          <p>Connect, collaborate, and learn from anywhere with Ghar Ka Guru Meet</p>
+          <div class="landing-actions">
+            <button id="btn-new-meeting" class="btn btn-primary">
+              <span class="material-icons">videocam</span>
+              New meeting
+            </button>
+            <button id="btn-schedule-meeting" class="btn btn-secondary">
+              <span class="material-icons">event</span>
+              Schedule meeting
+            </button>
+            <div class="join-input-wrapper">
+              <span class="material-icons">keyboard</span>
+              <input type="text" id="input-room-code" placeholder="Enter a code or session ID">
+              <button id="btn-join" class="btn btn-text" disabled>Join</button>
+            </div>
+          </div>
+        </div>
+        <div class="landing-illustration">
+          <div class="illustration-grid">
+            <div class="illustration-cell"></div>
+            <div class="illustration-cell"></div>
+            <div class="illustration-cell"></div>
+            <div class="illustration-cell"></div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Schedule Page -->
+    <div id="schedule-page" class="page">
+      <header class="landing-header">
+        <div class="logo" id="schedule-logo-home" style="cursor:pointer">
+          <img src="{{BASE_PATH}}/logo.png" alt="Ghar Ka Guru" class="platform-logo">
+          <span class="logo-text">Ghar Ka Guru</span>
+        </div>
+        <nav class="header-nav">
+          <button id="btn-nav-schedule" class="btn btn-text active-nav">Schedule</button>
+        </nav>
+      </header>
+      <main class="schedule-main">
+        <div class="schedule-content">
+          <!-- Create Meeting Form -->
+          <div class="schedule-card">
+            <h2>Schedule a New Meeting</h2>
+            <form id="schedule-form" class="schedule-form">
+              <div class="form-group">
+                <label for="meeting-title">Meeting Title</label>
+                <input type="text" id="meeting-title" placeholder="e.g. Weekly Standup" required>
+              </div>
+              <div class="form-group">
+                <label for="meeting-description">Description (optional)</label>
+                <textarea id="meeting-description" placeholder="What's this meeting about?" rows="3"></textarea>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="meeting-date">Date & Time</label>
+                  <input type="datetime-local" id="meeting-date" required>
+                </div>
+                <div class="form-group">
+                  <label for="meeting-duration">Duration (mins)</label>
+                  <select id="meeting-duration">
+                    <option value="15">15 min</option>
+                    <option value="30">30 min</option>
+                    <option value="45">45 min</option>
+                    <option value="60" selected>1 hour</option>
+                    <option value="90">1.5 hours</option>
+                    <option value="120">2 hours</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="host-name">Your Name (Host)</label>
+                <input type="text" id="host-name" placeholder="Your name" required>
+              </div>
+              <button type="submit" class="btn btn-primary btn-full">
+                <span class="material-icons">event</span>
+                Schedule Meeting
+              </button>
+            </form>
+          </div>
+
+          <!-- Scheduled Meetings List -->
+          <div class="meetings-list-card">
+            <div class="meetings-list-header">
+              <h2>Scheduled Meetings</h2>
+              <button id="btn-refresh-meetings" class="icon-btn" title="Refresh">
+                <span class="material-icons">refresh</span>
+              </button>
+            </div>
+            <div id="meetings-list" class="meetings-list">
+              <div class="meetings-empty">
+                <span class="material-icons">event_available</span>
+                <p>No meetings scheduled yet</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Preview Page (before joining) -->
+    <div id="preview-page" class="page">
+      <div class="preview-container">
+        <div class="preview-video-wrapper">
+          <video id="preview-video" autoplay muted playsinline></video>
+          <div id="preview-no-video" class="no-video-placeholder">
+            <div class="avatar-circle" id="preview-avatar">U</div>
+          </div>
+          <div class="preview-controls">
+            <button id="preview-toggle-audio" class="control-btn active" title="Toggle microphone">
+              <span class="material-icons">mic</span>
+            </button>
+            <button id="preview-toggle-video" class="control-btn active" title="Toggle camera">
+              <span class="material-icons">videocam</span>
+            </button>
+          </div>
+        </div>
+        <div class="preview-info">
+          <h2>Ready to join?</h2>
+          <p id="preview-room-id"></p>
+          <div class="name-input-wrapper">
+            <input type="text" id="input-user-name" placeholder="Your name" maxlength="30">
+          </div>
+          <div class="preview-buttons">
+            <button id="btn-join-now" class="btn btn-primary">Join now</button>
+            <button id="btn-back" class="btn btn-secondary">Back</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Meeting Page -->
+    <div id="meeting-page" class="page">
+      <div class="meeting-container">
+        <div class="meeting-header">
+          <div class="meeting-header-left">
+            <img src="{{BASE_PATH}}/logo.png" alt="Ghar Ka Guru" class="platform-logo platform-logo-meeting">
+            <div class="meeting-info">
+              <span class="material-icons">lock</span>
+              <span id="meeting-id-display"></span>
+              <div id="recording-indicator" class="recording-indicator hidden">
+                <span class="recording-dot"></span>
+                <span>Recording</span>
+              </div>
+            </div>
+          </div>
+          <div class="meeting-time" id="meeting-timer">0:00</div>
+        </div>
+
+        <div class="meeting-body">
+          <div class="video-grid" id="video-grid">
+            <div class="video-tile self-tile" id="self-tile">
+              <video id="local-video" autoplay muted playsinline></video>
+              <video id="local-screen-capture" autoplay muted playsinline class="hidden"></video>
+              <div id="local-screen-share-overlay" class="screen-share-overlay hidden">
+                <span class="material-icons">present_to_all</span>
+                <span>You are presenting</span>
+              </div>
+              <div id="local-no-video" class="no-video-overlay hidden">
+                <div class="avatar-circle" id="local-avatar">U</div>
+              </div>
+              <div class="tile-name">
+                <span id="local-name">You</span>
+              </div>
+              <div class="tile-mic-status" id="local-mic-status">
+                <span class="material-icons">mic</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Side Panel (Chat / Participants) -->
+          <div class="side-panel hidden" id="side-panel">
+            <div class="panel-header">
+              <h3 id="panel-title">Chat</h3>
+              <button class="icon-btn" id="btn-close-panel">
+                <span class="material-icons">close</span>
+              </button>
+            </div>
+            <div class="panel-content" id="panel-content">
+              <!-- Chat Panel -->
+              <div id="chat-panel" class="panel-section active">
+                <div class="chat-messages" id="chat-messages"></div>
+                <div class="chat-input-wrapper">
+                  <input type="text" id="chat-input" placeholder="Send a message to everyone">
+                  <button id="btn-send-chat" class="icon-btn">
+                    <span class="material-icons">send</span>
+                  </button>
+                </div>
+              </div>
+              <!-- Participants Panel -->
+              <div id="participants-panel" class="panel-section">
+                <div class="participants-list" id="participants-list"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom Controls -->
+        <div class="meeting-controls">
+          <div class="controls-left">
+            <div class="meeting-info-bottom">
+              <span id="meeting-id-bottom"></span>
+            </div>
+          </div>
+          <div class="controls-center">
+            <button id="btn-toggle-mic" class="control-btn active" title="Toggle microphone">
+              <span class="material-icons">mic</span>
+            </button>
+            <button id="btn-toggle-camera" class="control-btn active" title="Turn off camera">
+              <span class="material-icons">videocam</span>
+            </button>
+            <button id="btn-screen-share" class="control-btn" title="Share screen">
+              <span class="material-icons">present_to_all</span>
+            </button>
+            <button id="btn-record" class="control-btn" title="Record meeting">
+              <span class="material-icons">fiber_manual_record</span>
+            </button>
+            <button id="btn-end-call" class="control-btn end-call" title="Leave call">
+              <span class="material-icons">call_end</span>
+            </button>
+          </div>
+          <div class="controls-right">
+            <button id="btn-toggle-chat" class="control-btn" title="Chat">
+              <span class="material-icons">chat</span>
+            </button>
+            <button id="btn-toggle-participants" class="control-btn" title="Participants">
+              <span class="material-icons">people</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recording Consent Modal -->
+  <div id="consent-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-icon">
+        <span class="material-icons">security</span>
+      </div>
+      <h2>Secure GharkaGuru Meeting</h2>
+      <p class="modal-message">
+        Welcome to a secure <strong>GharkaGuru</strong> meeting. This platform is built for a
+        <strong>real-time Microsoft Teams–like experience</strong> with smooth audio and video,
+        even as more participants join.
+      </p>
+      <ul class="modal-points">
+        <li><span class="material-icons">fiber_manual_record</span> This meeting is fully recorded for security and compliance</li>
+        <li><span class="material-icons">cloud_upload</span> Recordings are stored securely in cloud storage</li>
+        <li><span class="material-icons">groups</span> Optimized for real-time collaboration with multiple participants</li>
+        <li><span class="material-icons">videocam_off</span> You may turn your camera on or off at any time during the meeting</li>
+      </ul>
+      <div class="modal-warning">
+        <span class="material-icons">warning</span>
+        <p>Sharing personal information such as <strong>phone numbers</strong> and <strong>email addresses</strong> during the meeting is <strong>strictly prohibited</strong>.</p>
+      </div>
+      <label class="consent-checkbox">
+        <input type="checkbox" id="consent-checkbox">
+        <span>I understand this meeting is recorded, I will not share personal contact details, and I agree to join</span>
+      </label>
+      <div class="modal-actions">
+        <button id="btn-consent-decline" class="btn btn-secondary">Leave</button>
+        <button id="btn-consent-accept" class="btn btn-primary" disabled>Agree &amp; Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <script>window.__BASE_PATH__ = '{{BASE_PATH}}';</script>
+  <script src="{{BASE_PATH}}/socket.io/socket.io.js"></script>
+  <script src="{{BASE_PATH}}/app.js"></script>
+</body>
+</html>
