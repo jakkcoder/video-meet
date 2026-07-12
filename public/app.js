@@ -58,8 +58,43 @@ class VideoMeetApp {
     this.aboveSince = 0;
     this.statsTimer = null;
     this.applyingParams = false;
+    this.isMobile = this.detectMobile();
 
     this.init();
+  }
+
+  detectMobile() {
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent));
+  }
+
+  getCameraConstraints() {
+    if (this.isMobile) {
+      return {
+        width: { ideal: 640, max: 640 },
+        height: { ideal: 360, max: 360 },
+        frameRate: { ideal: 20, max: 24 },
+        facingMode: 'user'
+      };
+    }
+    return {
+      width: { ideal: 1280, max: 1280 },
+      height: { ideal: 720, max: 720 },
+      frameRate: { ideal: 24, max: 30 },
+      facingMode: 'user'
+    };
+  }
+
+  async playMedia(el) {
+    if (!el) return;
+    el.setAttribute('playsinline', '');
+    el.setAttribute('webkit-playsinline', '');
+    try {
+      await el.play();
+    } catch (err) {
+      // Autoplay may be blocked until a gesture; join button covers most cases.
+      console.warn('Video play deferred:', err?.name || err);
+    }
   }
 
   init() {
@@ -129,18 +164,32 @@ class VideoMeetApp {
 
     try {
       this.localStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280, max: 1280 },
-          height: { ideal: 720, max: 720 },
-          frameRate: { ideal: 24, max: 30 },
-          facingMode: 'user'
-        },
-        audio: { echoCancellation: true, noiseSuppression: true }
+        video: this.getCameraConstraints(),
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
       });
-      document.getElementById('preview-video').srcObject = this.localStream;
+      const preview = document.getElementById('preview-video');
+      preview.srcObject = this.localStream;
+      await this.playMedia(preview);
       document.getElementById('preview-no-video').classList.add('hidden');
     } catch (err) {
       console.warn('Could not access media devices:', err);
+      // Retry audio-only if camera fails on mobile
+      try {
+        this.localStream = await navigator.mediaDevices.getUserMedia({
+          video: false,
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+        this.isVideoEnabled = false;
+        document.getElementById('preview-toggle-video')?.classList.add('muted');
+        const icon = document.getElementById('preview-toggle-video')?.querySelector('.material-icons');
+        if (icon) icon.textContent = 'videocam_off';
+      } catch (audioErr) {
+        console.warn('Could not access microphone:', audioErr);
+      }
       document.getElementById('preview-no-video').classList.remove('hidden');
     }
   }
@@ -248,6 +297,13 @@ class VideoMeetApp {
       return;
     }
 
+    // Unlock audio playback within the user-gesture chain (critical on iOS).
+    try {
+      const unlock = new AudioContext();
+      if (unlock.state === 'suspended') unlock.resume();
+      unlock.close?.();
+    } catch (e) { /* ignore */ }
+
     this.switchPage('meeting-page');
     this.setupLocalVideo();
     this.connectSocket();
@@ -263,6 +319,7 @@ class VideoMeetApp {
   setupLocalVideo() {
     const video = document.getElementById('local-video');
     video.srcObject = this.localStream;
+    this.playMedia(video);
 
     if (this.localStream) {
       this.localStream.getVideoTracks().forEach(track => {
@@ -277,6 +334,44 @@ class VideoMeetApp {
       document.getElementById('local-mic-status').classList.add('muted');
       document.getElementById('local-mic-status').querySelector('.material-icons').textContent = 'mic_off';
     }
+
+    this.setupMobileMeetingUi();
+    this.bindVisibilityHandlers();
+  }
+
+  setupMobileMeetingUi() {
+    const shareBtn = document.getElementById('btn-screen-share');
+    if (!shareBtn) return;
+
+    // Screen share is unreliable/unsupported on iOS Safari; hide when unavailable.
+    const canShare = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) &&
+      !(/iPhone|iPad|iPod/i.test(navigator.userAgent));
+
+    if (!canShare) {
+      shareBtn.classList.add('mobile-hide');
+      shareBtn.disabled = true;
+      shareBtn.title = 'Screen share is available on desktop';
+    }
+  }
+
+  bindVisibilityHandlers() {
+    if (this._visibilityBound) return;
+    this._visibilityBound = true;
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) return;
+
+      // Resume local preview / peer videos after returning from background (common on iOS).
+      this.playMedia(document.getElementById('local-video'));
+      this.peers.forEach(peer => {
+        const video = peer.tile?.querySelector('video');
+        this.playMedia(video);
+      });
+
+      if (this.audioContext?.state === 'suspended') {
+        this.audioContext.resume().catch(() => {});
+      }
+    });
   }
 
   connectSocket() {
@@ -420,9 +515,11 @@ class VideoMeetApp {
 
     connection.ontrack = (event) => {
       const video = tile.querySelector('video');
-      if (video.srcObject !== event.streams[0]) {
-        video.srcObject = event.streams[0];
+      const stream = event.streams[0] || new MediaStream([event.track]);
+      if (video.srcObject !== stream) {
+        video.srcObject = stream;
       }
+      this.playMedia(video);
     };
 
     connection.oniceconnectionstatechange = () => {
@@ -439,6 +536,8 @@ class VideoMeetApp {
 
     this.updateGridLayout();
     this.updateParticipantsList();
+    // Mobile starts one tier lower for smoother first connect.
+    if (this.isMobile && this.currentTier < 1) this.currentTier = 1;
     this.applyEncoderParams();
     this.startAdaptiveMonitor();
   }
@@ -497,7 +596,8 @@ class VideoMeetApp {
   startAdaptiveMonitor() {
     if (this.statsTimer) return;
 
-    this.statsTimer = setInterval(() => this.pollNetworkAndAdapt(), 2000);
+    const interval = this.isMobile ? 3000 : 2000;
+    this.statsTimer = setInterval(() => this.pollNetworkAndAdapt(), interval);
   }
 
   stopAdaptiveMonitor() {
@@ -561,7 +661,7 @@ class VideoMeetApp {
     tile.className = 'video-tile';
     tile.id = `tile-${userId}`;
     tile.innerHTML = `
-      <video autoplay playsinline></video>
+      <video autoplay playsinline webkit-playsinline></video>
       <div class="no-video-overlay hidden">
         <div class="avatar-circle">${userName[0]}</div>
       </div>
@@ -797,11 +897,16 @@ class VideoMeetApp {
     try {
       this.recordedChunks = [];
 
-      // Create a canvas to composite all video streams
+      // Lightweight capture: lower res/fps on mobile to keep calls smooth
+      const recW = this.isMobile ? 640 : 960;
+      const recH = this.isMobile ? 360 : 540;
+      const recFps = this.isMobile ? 12 : 20;
+      const recBitrate = this.isMobile ? 600000 : 1200000;
+
       this.recordingCanvas = document.createElement('canvas');
-      this.recordingCanvas.width = 1280;
-      this.recordingCanvas.height = 720;
-      this.recordingCtx = this.recordingCanvas.getContext('2d');
+      this.recordingCanvas.width = recW;
+      this.recordingCanvas.height = recH;
+      this.recordingCtx = this.recordingCanvas.getContext('2d', { alpha: false });
 
       // Create audio context to mix all audio streams
       const audioContext = new AudioContext();
@@ -830,7 +935,7 @@ class VideoMeetApp {
       this.drawRecordingFrame();
 
       // Combine canvas video stream with mixed audio
-      const canvasStream = this.recordingCanvas.captureStream(30);
+      const canvasStream = this.recordingCanvas.captureStream(recFps);
       const combinedStream = new MediaStream([
         ...canvasStream.getVideoTracks(),
         ...audioDestination.stream.getAudioTracks()
@@ -838,7 +943,7 @@ class VideoMeetApp {
 
       this.mediaRecorder = new MediaRecorder(combinedStream, {
         mimeType: this.getSupportedMimeType(),
-        videoBitsPerSecond: 2500000
+        videoBitsPerSecond: recBitrate
       });
 
       this.mediaRecorder.ondataavailable = (event) => {
@@ -851,7 +956,7 @@ class VideoMeetApp {
         this._recordingStopResolve?.();
       };
 
-      this.mediaRecorder.start(1000);
+      this.mediaRecorder.start(this.isMobile ? 2000 : 1000);
       this.isRecording = true;
 
       document.getElementById('btn-record').classList.add('recording');
@@ -869,6 +974,15 @@ class VideoMeetApp {
   drawRecordingFrame() {
     const ctx = this.recordingCtx;
     const canvas = this.recordingCanvas;
+    if (!ctx || !canvas) return;
+
+    // On mobile, skip every other frame to cut CPU while recording
+    this._recSkip = (this._recSkip || 0) + 1;
+    if (this.isMobile && this._recSkip % 2 === 0) {
+      this.recordingAnimFrame = requestAnimationFrame(() => this.drawRecordingFrame());
+      return;
+    }
+
     const videos = [];
 
     // Collect all video elements for recording
